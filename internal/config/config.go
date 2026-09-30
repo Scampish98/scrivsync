@@ -204,11 +204,12 @@ func remotePath(p string) (string, error) {
 	if strings.HasPrefix(p, "/") {
 		p = "disk:" + p
 	}
-	if !strings.HasPrefix(p, "disk:/") || strings.ContainsAny(p, "\\\x00\r\n") {
-		return "", errors.New("путь архива должен иметь вид disk:/папка/Project.zip")
+	namespace, relative, ok := strings.Cut(p, ":/")
+	if !ok || (namespace != "disk" && namespace != "app") || strings.ContainsAny(p, "\\\x00\r\n") {
+		return "", errors.New("путь архива должен иметь вид disk:/папка/Project.zip или app:/папка/Project.zip")
 	}
 
-	for _, part := range strings.Split(strings.TrimPrefix(p, "disk:/"), "/") {
+	for _, part := range strings.Split(relative, "/") {
 		if part == ".." || part == "." || part == "" {
 			return "", errors.New("облачный путь содержит пустой компонент, . или ..")
 		}

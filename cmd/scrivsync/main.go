@@ -29,6 +29,7 @@ const usage = `scrivsync — ручной обмен проектом через
   remote_path: 'disk:/Scrivener/Project.zip'
   token: 'ваш-токен'
 
+remote_path поддерживает disk:/ и app:/, например app:/Project.zip.
 Программу можно собрать в корень репозитория или в bin/.
 Относительный local_path отсчитывается от папки configs/.
 Перед запуском закройте Scrivener. Одновременный обмен с двух устройств не поддерживается.

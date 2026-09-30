@@ -27,7 +27,7 @@ func (d *Client) Stat(ctx context.Context, p string) (*Resource, error) {
 }
 
 func (d *Client) Mkdir(ctx context.Context, p string) error {
-	if p == "disk:" || p == "disk:/" {
+	if p == "disk:" || p == "disk:/" || p == "app:" || p == "app:/" {
 		return nil
 	}
 

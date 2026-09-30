@@ -125,9 +125,36 @@ func TestConfigCannotBePackedInsideProject(t *testing.T) {
 }
 
 func TestRemotePathValidation(t *testing.T) {
-	for _, p := range []string{"disk:/a/../b.zip", "disk:/folder/", "https://example.org/a.zip", "disk:/a\\b.zip"} {
-		if _, err := remotePath(p); err == nil {
-			t.Fatalf("accepted %q", p)
+	for input, expected := range map[string]string{
+		"disk:/Project.zip":          "disk:/Project.zip",
+		"/Романы/Проект.zip":         "disk:/Романы/Проект.zip",
+		"app:/Project.zip":           "app:/Project.zip",
+		"app:/Романы/Мой проект.zip": "app:/Романы/Мой проект.zip",
+	} {
+		actual, err := remotePath(input)
+		if err != nil || actual != expected {
+			t.Errorf("remotePath(%q) = %q, %v; want %q", input, actual, err, expected)
 		}
+	}
+
+	for _, p := range []string{
+		"disk:/a/../b.zip", "disk:/folder/", "https://example.org/a.zip", "disk:/a\\b.zip",
+		"app:/", "app:/../b.zip", "app:/a/./b.zip", "app:/a//b.zip", "app:/a\\b.zip",
+		"app:/folder/", "app:Project.zip", "app://Project.zip", "other:/Project.zip",
+	} {
+		if _, err := remotePath(p); err == nil {
+			t.Errorf("accepted %q", p)
+		}
+	}
+}
+
+func TestConfigAppPath(t *testing.T) {
+	filename := writeConfig(t, "local_path: 'Project.scriv'\nremote_path: 'app:/Project.zip'\ntoken: 'test-token'\n")
+	cfg, err := Load(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RemotePath != "app:/Project.zip" {
+		t.Fatalf("namespace changed: %q", cfg.RemotePath)
 	}
 }

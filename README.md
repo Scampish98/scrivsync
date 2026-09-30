@@ -64,7 +64,10 @@ token: 'ваш-токен-Яндекс-Диска'
 ```
 
 `remote_path` указывает на **архив**, не на папку. Пробелы и кириллица поддерживаются.
-Вместо `disk:/Scrivener/Novel.zip` можно указать `/Scrivener/Novel.zip`.
+Поддерживаются `disk:/Scrivener/Novel.zip` и `app:/Scrivener/Novel.zip`.
+Для архива в корне папки приложения можно указать `app:/Novel.zip`.
+Короткая запись `/Scrivener/Novel.zip` по-прежнему означает `disk:/Scrivener/Novel.zip`.
+Временный архив и папка `Backups` создаются рядом с архивом в том же пространстве путей.
 `local_path` может быть абсолютным или относительным: относительный путь отсчитывается
 от папки `configs/`. Сокращение `~` не используется: укажите полный путь.
 Родительская локальная папка должна существовать. Сам проект при первом `pull`
@@ -228,9 +231,29 @@ Writing/
 Зависимости фиксируются в `go.mod` и `go.sum` и загружаются Go при первой сборке.
 Папка `vendor/`, если создана локально, в Git не хранится.
 
+Для удобства в корне репозитория есть Makefile (нужен `make`):
+
+```sh
+make                 # список команд
+make test            # все тесты
+make vet             # статическая проверка кода
+make check           # тесты и go vet
+make build           # приложение для текущей платформы в bin/
+make build-all       # macOS arm64 и Windows amd64
+make fmt             # форматирование Go-кода
+make clean           # удаление собранных исполняемых файлов из bin/
+```
+
+Отдельные платформы можно собрать через `make build-macos` и `make build-windows`.
+После `make build` на macOS запускайте `./bin/scrivsync push` или `./bin/scrivsync pull`.
+Цели Makefile для проверок и сборки не запускают синхронизацию.
+
+Без `make` доступны те же команды Go:
+
 ```sh
 go test ./...
-go build -o scrivsync ./cmd/scrivsync
+go vet ./...
+go build -o bin/scrivsync ./cmd/scrivsync
 ```
 
 После сборки заполните `configs/config.yaml` в корне репозитория.

@@ -148,27 +148,33 @@ func assertLocal(t *testing.T, a *App, want string) {
 }
 
 func TestPushFirstAndBackup(t *testing.T) {
-	for _, existing := range []bool{false, true} {
-		t.Run(fmt.Sprint(existing), func(t *testing.T) {
-			d := newFake()
-			a := testApp(t, d)
-			writeTestFile(t, a.Local, "Files/chapter.rtf", "new", testTime)
-			old := archiveBytes(t, "old", testTime.Add(-time.Hour))
-			if existing {
-				d.put(a.Remote, old)
+	for _, remote := range []string{"disk:/Scrivener/Project.zip", "app:/Project.zip", "app:/Scrivener/Project.zip"} {
+		t.Run(remote, func(t *testing.T) {
+			for _, existing := range []bool{false, true} {
+				t.Run(fmt.Sprint(existing), func(t *testing.T) {
+					d := newFake()
+					a := testApp(t, d)
+					a.Remote = remote
+					writeTestFile(t, a.Local, "Files/chapter.rtf", "new", testTime)
+					old := archiveBytes(t, "old", testTime.Add(-time.Hour))
+					if existing {
+						d.put(a.Remote, old)
+					}
+					if err := a.push(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+					if _, ok := d.files[a.Remote]; !ok {
+						t.Fatal("no current archive")
+					}
+					if existing && !bytes.Equal(d.files[backupPath(a.Remote, testTime)].data, old) {
+						t.Fatal("old archive not preserved")
+					}
+					if _, err := os.Stat(a.journalPath()); !os.IsNotExist(err) {
+						t.Fatal("journal not cleared")
+					}
+				})
 			}
-			if err := a.push(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			if _, ok := d.files[a.Remote]; !ok {
-				t.Fatal("no current archive")
-			}
-			if existing && !bytes.Equal(d.files[backupPath(a.Remote, testTime)].data, old) {
-				t.Fatal("old archive not preserved")
-			}
-			if _, err := os.Stat(a.journalPath()); !os.IsNotExist(err) {
-				t.Fatal("journal not cleared")
-			}
+
 		})
 	}
 }
@@ -402,7 +408,13 @@ func TestPullRecoveryAcrossRenames(t *testing.T) {
 
 func TestBackupNameHasOnlyCreationTimestamp(t *testing.T) {
 	when := time.Date(2026, 9, 30, 17, 30, 0, 0, time.FixedZone("MSK", 3*3600))
-	if got := backupPath("disk:/Folder/Project.zip", when); got != "disk:/Folder/Backups/Project_2026-09-30T14-30-00Z.zip" {
-		t.Fatal(got)
+	for remote, expected := range map[string]string{
+		"disk:/Folder/Project.zip": "disk:/Folder/Backups/Project_2026-09-30T14-30-00Z.zip",
+		"app:/Folder/Project.zip":  "app:/Folder/Backups/Project_2026-09-30T14-30-00Z.zip",
+		"app:/Project.zip":         "app:/Backups/Project_2026-09-30T14-30-00Z.zip",
+	} {
+		if got := backupPath(remote, when); got != expected {
+			t.Errorf("backupPath(%q) = %q, want %q", remote, got, expected)
+		}
 	}
 }
