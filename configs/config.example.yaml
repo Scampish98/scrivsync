@@ -1,0 +1,6 @@
+# Скопируйте в configs/config.yaml и заполните поля.
+# На Windows используйте одинарные кавычки: 'C:\Writing\Novel.scriv'.
+# Относительный путь отсчитывается от configs/, не от Терминала.
+local_path: '/Users/you/Documents/Novel.scriv'
+remote_path: 'disk:/Scrivener/Novel.zip'
+token: ''

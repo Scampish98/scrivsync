@@ -1,0 +1,15 @@
+/scrivsync
+/scrivsync.exe
+/bin/
+.idea/
+vendor/
+configs/config.yaml
+*.test
+config.yaml
+.env
+.env.*
+!.env.example
+.DS_Store
+*.zip
+*.zip.tmp
+.*.scrivsync-state/
