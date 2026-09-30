@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -10,7 +9,7 @@ import (
 	"scrivsync/internal/report"
 )
 
-func (a *App) reportConflict(ctx context.Context, work string, local, incoming archive.Manifest, conflict error) error {
+func (a *App) writeConflictReport(ctx context.Context, work string, local, incoming archive.Manifest, conflict error) error {
 	projectDir := filepath.Join(work, "project")
 	reportDir := filepath.Join(work, "report")
 	a.log("Конфликт: скачанные данные сохранены в %q.", work)
@@ -27,9 +26,9 @@ func (a *App) reportConflict(ctx context.Context, work string, local, incoming a
 		Conflict:    conflict,
 	})
 	if err != nil {
-		return errors.Join(conflict, fmt.Errorf("не удалось завершить отчёт в %q; скачанные данные сохранены в %q: %w", reportDir, work, err))
+		return fmt.Errorf("не удалось завершить отчёт в %q; скачанные данные сохранены в %q: %w", reportDir, work, err)
 	}
 
 	a.log("Отчёт и список диффов: %s", filepath.Join(reportDir, "index.txt"))
-	return conflict
+	return nil
 }

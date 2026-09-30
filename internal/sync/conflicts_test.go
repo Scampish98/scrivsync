@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,33 +61,38 @@ func TestPullConflictPreservesDownloadAndReportsAcrossRetries(t *testing.T) {
 }
 
 func TestPullRetainsConflictDataWhenReportCannotBeWritten(t *testing.T) {
-	d := newFake()
-	a := testApp(t, d)
-	writeTestFile(t, a.Local, "Files/chapter.rtf", "local", testTime.Add(time.Hour))
-	d.put(a.Remote, archiveBytes(t, "remote", testTime))
-	d.afterDownload = func() {
-		runs, err := filepath.Glob(filepath.Join(a.State, "run-*"))
-		if err != nil || len(runs) != 1 {
-			t.Fatalf("unexpected temporary folders: %v, %v", runs, err)
-		}
-		// A pre-existing path deterministically simulates a report creation error.
-		if err := os.WriteFile(filepath.Join(runs[0], "report"), []byte("occupied"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var conflict *archive.ConflictError
-	err := a.pull(context.Background())
-	if !errors.As(err, &conflict) || !strings.Contains(err.Error(), "не удалось завершить отчёт") {
-		t.Fatalf("expected conflict and report error, got %v", err)
-	}
-	assertLocal(t, a, "local")
-	runs, _ := filepath.Glob(filepath.Join(a.State, "run-*"))
-	if len(runs) != 1 {
-		t.Fatal("download lost after report failure")
-	}
-	for _, name := range []string{"project.zip", "project/Files/chapter.rtf"} {
-		if _, err := os.Stat(filepath.Join(runs[0], filepath.FromSlash(name))); err != nil {
-			t.Fatalf("retained data missing: %s, %v", name, err)
-		}
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprint(force), func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			a.ForcePull = force
+			writeTestFile(t, a.Local, "Files/chapter.rtf", "local", testTime.Add(time.Hour))
+			d.put(a.Remote, archiveBytes(t, "remote", testTime))
+			d.afterDownload = func() {
+				runs, err := filepath.Glob(filepath.Join(a.State, "run-*"))
+				if err != nil || len(runs) != 1 {
+					t.Fatalf("unexpected temporary folders: %v, %v", runs, err)
+				}
+				// A pre-existing path deterministically simulates a report creation error.
+				if err := os.WriteFile(filepath.Join(runs[0], "report"), []byte("occupied"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var conflict *archive.ConflictError
+			err := a.pull(context.Background())
+			if !errors.As(err, &conflict) || !strings.Contains(err.Error(), "не удалось завершить отчёт") {
+				t.Fatalf("expected conflict and report error, got %v", err)
+			}
+			assertLocal(t, a, "local")
+			runs, _ := filepath.Glob(filepath.Join(a.State, "run-*"))
+			if len(runs) != 1 {
+				t.Fatal("download lost after report failure")
+			}
+			for _, name := range []string{"project.zip", "project/Files/chapter.rtf"} {
+				if _, err := os.Stat(filepath.Join(runs[0], filepath.FromSlash(name))); err != nil {
+					t.Fatalf("retained data missing: %s, %v", name, err)
+				}
+			}
+		})
 	}
 }

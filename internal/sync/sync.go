@@ -24,6 +24,7 @@ type App struct {
 	Out                  io.Writer
 	Now                  func() time.Time
 	CheckClosed          func(context.Context) error
+	ForcePull            bool
 }
 
 func (a *App) log(format string, v ...any) {
@@ -44,6 +45,9 @@ func (a *App) closed(ctx context.Context) error {
 func (a *App) Run(ctx context.Context, command string) error {
 	if command != "push" && command != "pull" {
 		return fmt.Errorf("неизвестная команда: %s", command)
+	}
+	if a.ForcePull && command != "pull" {
+		return fmt.Errorf("--force поддерживается только для pull")
 	}
 	if recovered, err := a.recover(ctx, command); recovered || err != nil {
 		return err

@@ -314,45 +314,60 @@ func TestPullConflictLeavesProjectUntouched(t *testing.T) {
 }
 
 func TestPullNewProjectAndIdenticalProject(t *testing.T) {
-	d := newFake()
-	a := testApp(t, d)
-	d.put(a.Remote, archiveBytes(t, "text", testTime))
-	if err := a.pull(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	assertLocal(t, a, "text")
-	if err := a.pull(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(a.State, "Backups")); !os.IsNotExist(err) {
-		t.Fatal("identical pull created backup")
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprint(force), func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			a.ForcePull = force
+			d.put(a.Remote, archiveBytes(t, "text", testTime))
+			if err := a.pull(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			assertLocal(t, a, "text")
+			if err := a.pull(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(a.State, "Backups")); !os.IsNotExist(err) {
+				t.Fatal("identical pull created backup")
+			}
+		})
 	}
 }
 
 func TestPullDetectsLocalChangesDuringDownload(t *testing.T) {
-	d := newFake()
-	a := testApp(t, d)
-	writeTestFile(t, a.Local, "Files/chapter.rtf", "old", testTime.Add(-time.Hour))
-	d.put(a.Remote, archiveBytes(t, "remote", testTime))
-	d.afterDownload = func() { writeTestFile(t, a.Local, "Files/chapter.rtf", "edited during pull", testTime.Add(time.Hour)) }
-	if err := a.pull(context.Background()); err == nil {
-		t.Fatal("local change ignored")
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprint(force), func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			a.ForcePull = force
+			writeTestFile(t, a.Local, "Files/chapter.rtf", "old", testTime.Add(-time.Hour))
+			d.put(a.Remote, archiveBytes(t, "remote", testTime))
+			d.afterDownload = func() { writeTestFile(t, a.Local, "Files/chapter.rtf", "edited during pull", testTime.Add(time.Hour)) }
+			if err := a.pull(context.Background()); err == nil {
+				t.Fatal("local change ignored")
+			}
+			assertLocal(t, a, "edited during pull")
+		})
 	}
-	assertLocal(t, a, "edited during pull")
 }
 
 func TestPullDownloadChecksumMismatch(t *testing.T) {
-	d := newFake()
-	a := testApp(t, d)
-	writeTestFile(t, a.Local, "Files/chapter.rtf", "keep", testTime)
-	d.put(a.Remote, archiveBytes(t, "new", testTime.Add(time.Hour)))
-	o := d.files[a.Remote]
-	o.data = []byte("corrupt")
-	d.files[a.Remote] = o
-	if err := a.pull(context.Background()); err == nil {
-		t.Fatal("checksum mismatch ignored")
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprint(force), func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			a.ForcePull = force
+			writeTestFile(t, a.Local, "Files/chapter.rtf", "keep", testTime)
+			d.put(a.Remote, archiveBytes(t, "new", testTime.Add(time.Hour)))
+			o := d.files[a.Remote]
+			o.data = []byte("corrupt")
+			d.files[a.Remote] = o
+			if err := a.pull(context.Background()); err == nil {
+				t.Fatal("checksum mismatch ignored")
+			}
+			assertLocal(t, a, "keep")
+		})
 	}
-	assertLocal(t, a, "keep")
 }
 
 func TestPullRecoveryAcrossRenames(t *testing.T) {

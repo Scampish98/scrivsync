@@ -22,7 +22,7 @@ const usage = `scrivsync — ручной обмен проектом через
 
 Использование:
   scrivsync push
-  scrivsync pull
+  scrivsync pull [--force]
 
 Пути и токен читаются из configs/config.yaml в папке проекта программы:
   local_path: '/путь/Project.scriv'
@@ -35,6 +35,7 @@ remote_path поддерживает disk:/ и app:/, например app:/Proj
 Перед запуском закройте Scrivener. Одновременный обмен с двух устройств не поддерживается.
 push сохраняет старый архив в соседнюю облачную папку Backups.
 pull останавливается при конфликтах и сохраняет локальный бэкап перед заменой.
+pull --force принимает архив при конфликтах, сохраняя полный бэкап и отчёт.
 Повторите ту же команду после сбоя: она продолжит незавершённую замену.
 `
 
@@ -58,8 +59,9 @@ func execute(ctx context.Context, args []string, out io.Writer) error {
 		_, err := fmt.Fprint(out, usage)
 		return err
 	}
-	if len(args) != 1 || (args[0] != "push" && args[0] != "pull") {
-		return fmt.Errorf("ожидается только команда push или pull; пути и токен задаются в config.yaml\n%s", usage)
+	command, force, err := parseCommand(args)
+	if err != nil {
+		return err
 	}
 
 	configFile, err := config.Filename()
@@ -107,9 +109,21 @@ func execute(ctx context.Context, args []string, out io.Writer) error {
 		Out:         out,
 		Now:         time.Now,
 		CheckClosed: lock.CheckScrivener,
+		ForcePull:   force,
 	}
 
-	return a.Run(ctx, args[0])
+	return a.Run(ctx, command)
+}
+
+func parseCommand(args []string) (string, bool, error) {
+	if len(args) == 1 && (args[0] == "push" || args[0] == "pull") {
+		return args[0], false, nil
+	}
+	if len(args) == 2 && args[0] == "pull" && args[1] == "--force" {
+		return "pull", true, nil
+	}
+
+	return "", false, fmt.Errorf("ожидается push, pull или pull --force; пути и токен задаются в config.yaml\n%s", usage)
 }
 
 func resolveLocalProject(local string) (string, error) {

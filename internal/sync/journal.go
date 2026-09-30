@@ -22,6 +22,7 @@ type Journal struct {
 	Local           string           `json:"local"`
 	Remote          string           `json:"remote"`
 	Work            string           `json:"work"`
+	RetainWork      bool             `json:"retain_work,omitempty"`
 	Backup          string           `json:"backup,omitempty"`
 	TemporaryRemote string           `json:"temporary_remote,omitempty"`
 	OldRemote       *yandex.Resource `json:"old_remote,omitempty"`
@@ -70,7 +71,9 @@ func (a *App) finish(j *Journal) error {
 	if err := fileutil.SyncDir(a.State); err != nil {
 		return err
 	}
-	fileutil.RemoveAll(j.Work)
+	if !j.RetainWork {
+		fileutil.RemoveAll(j.Work)
+	}
 
 	return nil
 }

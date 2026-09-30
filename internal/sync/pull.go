@@ -64,7 +64,11 @@ func (a *App) pull(ctx context.Context) error {
 	if err := archive.CheckConflicts(before, incoming); err != nil {
 		// Retain both the archive and extracted project even if reporting fails.
 		keep = true
-		return a.reportConflict(ctx, work, before, incoming, err)
+		reportErr := a.writeConflictReport(ctx, work, before, incoming, err)
+		if !a.ForcePull || reportErr != nil {
+			return errors.Join(err, reportErr)
+		}
+		a.log("Обнаружены конфликты; --force принимает архив после сохранения полного локального бэкапа.")
 	}
 
 	if exists && archive.SameManifest(before, incoming, false) {
@@ -77,6 +81,7 @@ func (a *App) pull(ctx context.Context) error {
 		return err
 	}
 
+	j.RetainWork = keep
 	keep = true
 	if err := a.save(j); err != nil {
 		return err
@@ -138,6 +143,9 @@ func (a *App) resumePull(ctx context.Context, j *Journal) error {
 		return err
 	}
 	a.log("Pull завершён: %s", a.Local)
+	if j.RetainWork {
+		a.log("Отчёт о принятых конфликтах: %s", filepath.Join(j.Work, "report", "index.txt"))
+	}
 	if j.Backup != "" {
 		a.log("Локальный бэкап: %s", j.Backup)
 	}
