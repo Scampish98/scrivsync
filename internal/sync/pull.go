@@ -58,11 +58,13 @@ func (a *App) pull(ctx context.Context) error {
 		return err
 	}
 
-	if err := archive.CheckConflicts(before, incoming); err != nil {
-		return err
-	}
 	if err := a.checkPullUnchanged(ctx, remote, before, exists); err != nil {
 		return err
+	}
+	if err := archive.CheckConflicts(before, incoming); err != nil {
+		// Retain both the archive and extracted project even if reporting fails.
+		keep = true
+		return a.reportConflict(ctx, work, before, incoming, err)
 	}
 
 	if exists && archive.SameManifest(before, incoming, false) {
