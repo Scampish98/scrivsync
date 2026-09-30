@@ -260,26 +260,24 @@ func TestPushDetectsRemoteChange(t *testing.T) {
 	}
 }
 
-func TestPullInstallsAndBacksUp(t *testing.T) {
-	d := newFake()
-	a := testApp(t, d)
-	writeTestFile(t, a.Local, "Files/chapter.rtf", "old", testTime.Add(-time.Hour))
-	d.put(a.Remote, archiveBytes(t, "new", testTime))
-	if err := a.pull(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	assertLocal(t, a, "new")
-	backups, err := os.ReadDir(filepath.Join(a.State, "Backups"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backups: %v %v", backups, err)
-	}
-	b, err := os.ReadFile(filepath.Join(a.State, "Backups", backups[0].Name(), "Files", "chapter.rtf"))
-	if err != nil || string(b) != "old" {
-		t.Fatal("backup content lost")
-	}
-	fi, err := os.Stat(filepath.Join(a.Local, "Files", "chapter.rtf"))
-	if err != nil || !fi.ModTime().Equal(testTime) {
-		t.Fatal("mtime not restored")
+func TestPullInstallsWithoutPermanentBackup(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprint(force), func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			a.ForcePull = force
+			writeTestFile(t, a.Local, "Files/chapter.rtf", "old", testTime.Add(-time.Hour))
+			d.put(a.Remote, archiveBytes(t, "new", testTime))
+			if err := a.pull(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			assertLocal(t, a, "new")
+			assertNoPullBackup(t, a)
+			fi, err := os.Stat(filepath.Join(a.Local, "Files", "chapter.rtf"))
+			if err != nil || !fi.ModTime().Equal(testTime) {
+				t.Fatal("mtime not restored")
+			}
+		})
 	}
 }
 
@@ -431,5 +429,59 @@ func TestBackupNameHasOnlyCreationTimestamp(t *testing.T) {
 		if got := backupPath(remote, when); got != expected {
 			t.Errorf("backupPath(%q) = %q, want %q", remote, got, expected)
 		}
+	}
+}
+
+func TestPullRecoveryWithTemporaryRollback(t *testing.T) {
+	for _, phase := range []int{0, 1, 2} {
+		t.Run(fmt.Sprint(phase), func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			ctx := context.Background()
+			writeTestFile(t, a.Local, "Files/chapter.rtf", "old", testTime.Add(-time.Hour))
+			old, err := archive.Scan(ctx, a.Local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			work, err := os.MkdirTemp(a.State, "run-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			stage := filepath.Join(work, "project")
+			writeTestFile(t, stage, "Files/chapter.rtf", "new", testTime)
+			incoming, err := archive.Scan(ctx, stage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backup := filepath.Join(work, "previous-project")
+			if err := os.MkdirAll(filepath.Dir(backup), 0700); err != nil {
+				t.Fatal(err)
+			}
+			j := &Journal{Version: 1, Command: "pull", Phase: "install", Local: a.Local, Remote: a.Remote, Work: work, Backup: backup, OldLocal: old, NewLocal: incoming}
+			if err := a.save(j); err != nil {
+				t.Fatal(err)
+			}
+			if phase >= 1 {
+				if err := os.Rename(a.Local, backup); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if phase == 2 {
+				if err := os.Rename(stage, a.Local); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if phase >= 1 {
+				data, err := os.ReadFile(filepath.Join(backup, "Files", "chapter.rtf"))
+				if err != nil || string(data) != "old" {
+					t.Fatal("rollback data lost before recovery")
+				}
+			}
+			if ok, err := a.recover(ctx, "pull"); !ok || err != nil {
+				t.Fatalf("recovery: %v %v", ok, err)
+			}
+			assertLocal(t, a, "new")
+			assertNoPullBackup(t, a)
+		})
 	}
 }

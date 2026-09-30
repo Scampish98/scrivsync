@@ -76,12 +76,11 @@ func (a *App) pull(ctx context.Context) error {
 		return nil
 	}
 
-	j, err := a.preparePull(work, before, incoming, exists)
+	j, err := a.preparePull(work, before, incoming, exists, keep)
 	if err != nil {
 		return err
 	}
 
-	j.RetainWork = keep
 	keep = true
 	if err := a.save(j); err != nil {
 		return err
@@ -146,7 +145,7 @@ func (a *App) resumePull(ctx context.Context, j *Journal) error {
 	if j.RetainWork {
 		a.log("Отчёт о принятых конфликтах: %s", filepath.Join(j.Work, "report", "index.txt"))
 	}
-	if j.Backup != "" {
+	if j.Backup != "" && !j.temporaryPullBackup() {
 		a.log("Локальный бэкап: %s", j.Backup)
 	}
 
@@ -199,19 +198,23 @@ func (a *App) checkPullUnchanged(ctx context.Context, remote *yandex.Resource, b
 	return nil
 }
 
-func (a *App) preparePull(work string, before, incoming archive.Manifest, exists bool) (*Journal, error) {
+func (a *App) preparePull(work string, before, incoming archive.Manifest, exists, conflicts bool) (*Journal, error) {
 	j := &Journal{
-		Version:  1,
-		Command:  "pull",
-		Phase:    "install",
-		Local:    a.Local,
-		Remote:   a.Remote,
-		Work:     work,
-		OldLocal: before,
-		NewLocal: incoming,
+		Version:    1,
+		Command:    "pull",
+		Phase:      "install",
+		Local:      a.Local,
+		Remote:     a.Remote,
+		Work:       work,
+		OldLocal:   before,
+		NewLocal:   incoming,
+		RetainWork: conflicts,
 	}
 	if exists {
-		j.Backup = filepath.Join(a.State, "Backups", filepath.Base(a.Local)+"_"+a.Now().UTC().Format("2006-01-02T15-04-05Z"))
+		j.Backup = filepath.Join(work, "previous-project")
+		if conflicts {
+			j.Backup = filepath.Join(a.State, "Backups", filepath.Base(a.Local)+"_"+a.Now().UTC().Format("2006-01-02T15-04-05Z"))
+		}
 		if _, err := os.Lstat(j.Backup); err == nil {
 			return nil, fmt.Errorf("имя локального бэкапа уже занято: %s", j.Backup)
 		} else if !os.IsNotExist(err) {

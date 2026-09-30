@@ -32,6 +32,12 @@ type Journal struct {
 	NewLocal        archive.Manifest `json:"new_local,omitempty"`
 }
 
+// Temporary rollback data lives inside the operation directory and is cleaned up
+// only after installation succeeds. Older journals keep their permanent backups.
+func (j *Journal) temporaryPullBackup() bool {
+	return j.Command == "pull" && j.Backup == filepath.Join(j.Work, "previous-project")
+}
+
 func (a *App) journalPath() string { return filepath.Join(a.State, "operation.json") }
 
 func (a *App) save(j *Journal) error {
@@ -103,7 +109,7 @@ func (a *App) recover(ctx context.Context, command string) (bool, error) {
 		if j.OldRemote != nil && j.Backup != backupPath(a.Remote, j.OldRemote.Created) {
 			return true, errors.New("недопустимый путь бэкапа в журнале")
 		}
-	} else if j.Backup != "" && filepath.Dir(j.Backup) != filepath.Join(a.State, "Backups") {
+	} else if j.Backup != "" && !j.temporaryPullBackup() && filepath.Dir(j.Backup) != filepath.Join(a.State, "Backups") {
 		return true, errors.New("недопустимый локальный бэкап в журнале")
 	}
 	a.log("Продолжаю незавершённый %s, этап %s.", command, j.Phase)

@@ -96,7 +96,7 @@ func TestForcePullBackupCollisionLeavesLocalUntouched(t *testing.T) {
 	}
 }
 
-func TestPullOnlyUIChangeDoesNotBlockAndIsBackedUp(t *testing.T) {
+func TestPullOnlyUIChangeDoesNotBlockOrCreateBackup(t *testing.T) {
 	d := newFake()
 	a := testApp(t, d)
 	writeTestFile(t, a.Local, "Files/chapter.rtf", "same", testTime)
@@ -105,8 +105,16 @@ func TestPullOnlyUIChangeDoesNotBlockAndIsBackedUp(t *testing.T) {
 	if err := a.Run(context.Background(), "pull"); err != nil {
 		t.Fatal(err)
 	}
-	backups, _ := filepath.Glob(filepath.Join(a.State, "Backups", "*", "Settings", "ui.ini"))
-	if len(backups) != 1 {
-		t.Fatal("UI preferences not backed up")
+	assertNoPullBackup(t, a)
+}
+
+func assertNoPullBackup(t *testing.T, a *App) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(a.State, "Backups")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected permanent backup: %v", err)
+	}
+	runs, err := filepath.Glob(filepath.Join(a.State, "run-*"))
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("temporary rollback data not cleaned: %v, %v", runs, err)
 	}
 }
