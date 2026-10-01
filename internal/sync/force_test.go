@@ -55,6 +55,9 @@ func TestForcePullBacksUpWholeProjectAndRetainsReport(t *testing.T) {
 			if len(backups) != 1 {
 				t.Fatalf("backups: %v", backups)
 			}
+			if _, err := os.Stat(filepath.Join(a.State, "FileBackups")); !os.IsNotExist(err) {
+				t.Fatal("full backup duplicated by selective backup")
+			}
 			backup, err := archive.Scan(ctx, backups[0])
 			if err != nil || !archive.SameManifest(before, backup, true) {
 				t.Fatalf("incomplete backup: %v", err)
@@ -96,22 +99,92 @@ func TestForcePullBackupCollisionLeavesLocalUntouched(t *testing.T) {
 	}
 }
 
-func TestPullOnlyUIChangeDoesNotBlockOrCreateBackup(t *testing.T) {
-	d := newFake()
-	a := testApp(t, d)
-	writeTestFile(t, a.Local, "Files/chapter.rtf", "same", testTime)
-	writeTestFile(t, a.Local, "Settings/ui.ini", "preferences", testTime.Add(time.Hour))
-	d.put(a.Remote, archiveBytes(t, "same", testTime))
-	if err := a.Run(context.Background(), "pull"); err != nil {
-		t.Fatal(err)
+func TestPullExcludedConflictsCreateSelectiveBackup(t *testing.T) {
+	for _, remoteHasGenerated := range []bool{false, true} {
+		name := "local-only"
+		if remoteHasGenerated {
+			name = "local-newer"
+		}
+		t.Run(name, func(t *testing.T) {
+			d := newFake()
+			a := testApp(t, d)
+			writeTestFile(t, a.Local, "Files/chapter.rtf", "same", testTime)
+			paths := []string{
+				"Settings/ui.ini", "Settings/ui.plist", "Settings/ui-common.xml",
+				"Settings/recents.txt", "Settings/favorites.xml", "Settings/templateinfo.xml",
+				"Files/search.indexes", "Files/binder.autosave", "Files/binder.backup",
+				"Files/Data/docs.checksum", "QuickLook/Preview.html", "QuickLook/cache/Thumbnail.jpg",
+			}
+			for _, path := range paths {
+				writeTestFile(t, a.Local, path, "local state", testTime.Add(time.Hour))
+			}
+
+			remoteRoot := filepath.Join(t.TempDir(), "Project.scriv")
+			writeTestFile(t, remoteRoot, "Files/chapter.rtf", "same", testTime)
+			if remoteHasGenerated {
+				for _, path := range paths {
+					writeTestFile(t, remoteRoot, path, "remote state", testTime)
+				}
+			}
+			zipPath := filepath.Join(t.TempDir(), "project.zip")
+			if _, err := archive.Create(context.Background(), remoteRoot, zipPath); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(zipPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.put(a.Remote, data)
+			if err := a.Run(context.Background(), "pull"); err != nil {
+				t.Fatal(err)
+			}
+			assertLocal(t, a, "same")
+			backups, err := filepath.Glob(filepath.Join(a.State, "FileBackups", "*"))
+			if err != nil || len(backups) != 1 {
+				t.Fatalf("selective backups: %v, %v", backups, err)
+			}
+			backup, err := archive.Scan(context.Background(), backups[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(excludedFilePaths(backup)) != len(paths) {
+				t.Fatalf("unexpected backup files: %v", backup)
+			}
+			for _, path := range paths {
+				entry := backup[path]
+				content, err := os.ReadFile(filepath.Join(backups[0], filepath.FromSlash(path)))
+				if err != nil || string(content) != "local state" || !entry.Modified.Equal(testTime.Add(time.Hour)) {
+					t.Fatalf("local backup lost: %s, %v", path, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(a.State, "Backups")); !os.IsNotExist(err) {
+				t.Fatal("unexpected full project backup")
+			}
+			runs, _ := filepath.Glob(filepath.Join(a.State, "run-*"))
+			if len(runs) != 0 {
+				t.Fatal("temporary rollback not cleaned up")
+			}
+			for _, path := range paths {
+				data, err := os.ReadFile(filepath.Join(a.Local, filepath.FromSlash(path)))
+				if remoteHasGenerated {
+					if err != nil || string(data) != "remote state" {
+						t.Fatalf("archive setting not installed: %s, %v", path, err)
+					}
+				} else if !os.IsNotExist(err) {
+					t.Fatalf("local-only setting left behind: %s, %v", path, err)
+				}
+			}
+		})
 	}
-	assertNoPullBackup(t, a)
 }
 
 func assertNoPullBackup(t *testing.T, a *App) {
 	t.Helper()
 	if _, err := os.Stat(filepath.Join(a.State, "Backups")); !os.IsNotExist(err) {
 		t.Fatalf("unexpected permanent backup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.State, "FileBackups")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected selective backup: %v", err)
 	}
 	runs, err := filepath.Glob(filepath.Join(a.State, "run-*"))
 	if err != nil || len(runs) != 0 {

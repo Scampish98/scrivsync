@@ -14,59 +14,73 @@ func (e *ConflictError) Error() string {
 }
 
 func CheckConflicts(local, incoming Manifest) error {
-	var issues []string
-	for p, l := range local {
-		if interfaceOnlyDifference(p, l, local, incoming) {
-			continue
-		}
-		r, ok := incoming[p]
-		if !ok {
-			issues = append(issues, fmt.Sprintf("%q: существует только локально", p))
-			continue
-		}
-		if l.Dir != r.Dir {
-			issues = append(issues, fmt.Sprintf("%q: файл и папка имеют одинаковый путь", p))
-			continue
-		}
-		if l.Dir || l.Hash == r.Hash {
-			continue
-		}
-		if r.Modified.Sub(l.Modified) <= 2*time.Second {
-			reason := "различное содержимое; даты отличаются не более чем на 2 секунды"
-			if l.Modified.Sub(r.Modified) > 2*time.Second {
-				reason = "локальный файл новее"
-			}
-			issues = append(issues, fmt.Sprintf("%q: %s (локально %s; архив %s)", p, reason, l.Modified.Format(time.RFC3339Nano), r.Modified.Format(time.RFC3339Nano)))
-		}
-	}
-	if len(issues) == 0 {
-		return nil
-	}
-	sort.Strings(issues)
-	return &ConflictError{Items: issues}
+	_, err := CompareConflicts(local, incoming)
+	return err
 }
 
-// UI preferences travel with the project, but do not block accepting its contents.
-// A type change is still a structural conflict.
-func interfaceOnlyDifference(p string, entry Entry, local, incoming Manifest) bool {
-	remote, exists := incoming[p]
-	if p == "Settings/ui.ini" {
-		return !entry.Dir && (!exists || !remote.Dir)
-	}
-	if p != "Settings" || !entry.Dir || exists {
-		return false
-	}
+type ConflictOverride struct {
+	Accept bool
+	Reason string
+}
 
-	// Do not report the parent of a local-only ui.ini as a separate conflict.
-	found := false
-	for child, childEntry := range local {
-		if !strings.HasPrefix(child, "Settings/") {
+// CompareConflicts returns excluded local files that need a backup, separately
+// from conflicts that block installation. Both use the same conflict rules.
+func CompareConflicts(local, incoming Manifest) (Manifest, error) {
+	return CompareConflictsWithOverrides(local, incoming, nil)
+}
+
+// Overrides apply only to two existing ordinary files, never to type changes.
+func CompareConflictsWithOverrides(local, incoming Manifest, overrides map[string]ConflictOverride) (Manifest, error) {
+	excluded := Manifest{}
+	var issues []string
+	for p, l := range local {
+		r, exists := incoming[p]
+		reason := conflictReason(l, r, exists)
+		if decision, ok := overrides[p]; ok && exists && !l.Dir && !r.Dir && l.Hash != r.Hash {
+			if decision.Accept {
+				if reason != "" {
+					excluded[p] = l
+				}
+				continue
+			}
+			reason = decision.Reason
+		}
+		if reason == "" {
 			continue
 		}
-		if child != "Settings/ui.ini" || childEntry.Dir {
-			return false
+
+		// A type change always blocks, even when the path is excluded.
+		if (!exists || l.Dir == r.Dir) && pullExclusions.matches(p, l, local) {
+			if !l.Dir {
+				excluded[p] = l
+			}
+			continue
 		}
-		found = true
+		issues = append(issues, fmt.Sprintf("%q: %s", p, reason))
 	}
-	return found
+	if len(issues) == 0 {
+		return excluded, nil
+	}
+
+	sort.Strings(issues)
+	return excluded, &ConflictError{Items: issues}
+}
+
+func conflictReason(local, remote Entry, exists bool) string {
+	if !exists {
+		return "существует только локально"
+	}
+	if local.Dir != remote.Dir {
+		return "файл и папка имеют одинаковый путь"
+	}
+	if local.Dir || local.Hash == remote.Hash || remote.Modified.Sub(local.Modified) > 2*time.Second {
+		return ""
+	}
+
+	reason := "различное содержимое; даты отличаются не более чем на 2 секунды"
+	if local.Modified.Sub(remote.Modified) > 2*time.Second {
+		reason = "локальный файл новее"
+	}
+	return fmt.Sprintf("%s (локально %s; архив %s)", reason,
+		local.Modified.Format(time.RFC3339Nano), remote.Modified.Format(time.RFC3339Nano))
 }

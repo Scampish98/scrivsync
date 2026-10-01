@@ -53,6 +53,10 @@ func (a *App) push(ctx context.Context) error {
 		return err
 	}
 
+	if err := a.prepareBaseline(ctx, j); err != nil {
+		return err
+	}
+
 	// Retain the snapshot even if saving the journal has an uncertain outcome.
 	keep = true
 	if err := a.save(j); err != nil {
@@ -210,6 +214,9 @@ func (a *App) publishSnapshot(ctx context.Context, j *Journal) error {
 	}
 	if err := a.verifyRemote(ctx, a.Remote, j.ArchiveHash, j.ArchiveSize); err != nil {
 		return err
+	}
+	if err := a.installBaseline(ctx, j); err != nil {
+		return fmt.Errorf("сохранение базы scrivx не завершено; повторите push: %w", err)
 	}
 	if err := a.finish(j); err != nil {
 		return err

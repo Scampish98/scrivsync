@@ -22,7 +22,11 @@ type Journal struct {
 	Local           string           `json:"local"`
 	Remote          string           `json:"remote"`
 	Work            string           `json:"work"`
+	BaselineUpdate  bool             `json:"baseline_update,omitempty"`
+	Baseline        *baselineMeta    `json:"baseline,omitempty"`
 	RetainWork      bool             `json:"retain_work,omitempty"`
+	ExcludedBackup  string           `json:"excluded_backup,omitempty"`
+	ExcludedFiles   archive.Manifest `json:"excluded_files,omitempty"`
 	Backup          string           `json:"backup,omitempty"`
 	TemporaryRemote string           `json:"temporary_remote,omitempty"`
 	OldRemote       *yandex.Resource `json:"old_remote,omitempty"`
@@ -111,6 +115,12 @@ func (a *App) recover(ctx context.Context, command string) (bool, error) {
 		}
 	} else if j.Backup != "" && !j.temporaryPullBackup() && filepath.Dir(j.Backup) != filepath.Join(a.State, "Backups") {
 		return true, errors.New("недопустимый локальный бэкап в журнале")
+	}
+	if err := validateBaselineJournal(&j); err != nil {
+		return true, err
+	}
+	if err := a.validateExcludedBackup(&j); err != nil {
+		return true, err
 	}
 	a.log("Продолжаю незавершённый %s, этап %s.", command, j.Phase)
 	if err := a.closed(ctx); err != nil {

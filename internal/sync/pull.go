@@ -61,26 +61,42 @@ func (a *App) pull(ctx context.Context) error {
 	if err := a.checkPullUnchanged(ctx, remote, before, exists); err != nil {
 		return err
 	}
-	if err := archive.CheckConflicts(before, incoming); err != nil {
+	overrides, err := a.scrivxOverrides(ctx, work, before, incoming)
+	if err != nil {
+		return err
+	}
+	excluded, conflictErr := archive.CompareConflictsWithOverrides(before, incoming, overrides)
+	if conflictErr != nil {
 		// Retain both the archive and extracted project even if reporting fails.
 		keep = true
-		reportErr := a.writeConflictReport(ctx, work, before, incoming, err)
+		reportErr := a.writeConflictReport(ctx, work, before, incoming, conflictErr)
 		if !a.ForcePull || reportErr != nil {
-			return errors.Join(err, reportErr)
+			return errors.Join(conflictErr, reportErr)
 		}
 		a.log("Обнаружены конфликты; --force принимает архив после сохранения полного локального бэкапа.")
 	}
 
 	if exists && archive.SameManifest(before, incoming, false) {
+		j := &Journal{Version: 1, Command: "pull", Phase: "baseline", Local: a.Local, Remote: a.Remote, Work: work, NewLocal: before}
+		if err := a.prepareBaseline(ctx, j); err != nil {
+			return err
+		}
+		keep = true
+		if err := a.save(j); err != nil {
+			return err
+		}
 		a.log("Содержимое проекта совпадает с архивом; замена не требуется.")
-		return nil
+		return a.resumePull(ctx, j)
 	}
 
-	j, err := a.preparePull(work, before, incoming, exists, keep)
+	j, err := a.preparePull(work, before, incoming, exists, conflictErr != nil, excluded)
 	if err != nil {
 		return err
 	}
 
+	if err := a.prepareBaseline(ctx, j); err != nil {
+		return err
+	}
 	keep = true
 	if err := a.save(j); err != nil {
 		return err
@@ -90,6 +106,19 @@ func (a *App) pull(ctx context.Context) error {
 }
 
 func (a *App) resumePull(ctx context.Context, j *Journal) error {
+	if j.Phase == "baseline" {
+		if err := a.closed(ctx); err != nil {
+			return err
+		}
+		current, exists, err := scanOptional(ctx, a.Local)
+		if err != nil {
+			return err
+		}
+		if !exists || !archive.SameManifest(current, j.NewLocal, true) {
+			return errors.New("локальный проект изменился перед сохранением базы; операция остановлена")
+		}
+		return a.finishPull(ctx, j)
+	}
 	if j.Phase != "install" {
 		return errors.New("неизвестный этап pull в журнале")
 	}
@@ -128,6 +157,10 @@ func (a *App) resumePull(ctx context.Context, j *Journal) error {
 			return err
 		}
 
+		if err := a.preserveExcludedFiles(ctx, j); err != nil {
+			return fmt.Errorf("бэкап исключённых файлов не завершён; предыдущий проект сохранён в %q; повторите pull: %w", j.Backup, err)
+		}
+
 		if err := os.Rename(stage, a.Local); err != nil {
 			return fmt.Errorf("установка не завершена; предыдущий проект сохранён в %q; повторите pull: %w", j.Backup, err)
 		}
@@ -138,18 +171,10 @@ func (a *App) resumePull(ctx context.Context, j *Journal) error {
 			return err
 		}
 	}
-	if err := a.finish(j); err != nil {
+	if err := a.verifyExcludedBackup(ctx, j); err != nil {
 		return err
 	}
-	a.log("Pull завершён: %s", a.Local)
-	if j.RetainWork {
-		a.log("Отчёт о принятых конфликтах: %s", filepath.Join(j.Work, "report", "index.txt"))
-	}
-	if j.Backup != "" && !j.temporaryPullBackup() {
-		a.log("Локальный бэкап: %s", j.Backup)
-	}
-
-	return nil
+	return a.finishPull(ctx, j)
 }
 
 func (a *App) downloadProject(ctx context.Context, work string, remote *yandex.Resource) (archive.Manifest, error) {
@@ -198,7 +223,7 @@ func (a *App) checkPullUnchanged(ctx context.Context, remote *yandex.Resource, b
 	return nil
 }
 
-func (a *App) preparePull(work string, before, incoming archive.Manifest, exists, conflicts bool) (*Journal, error) {
+func (a *App) preparePull(work string, before, incoming archive.Manifest, exists, conflicts bool, excluded archive.Manifest) (*Journal, error) {
 	j := &Journal{
 		Version:    1,
 		Command:    "pull",
@@ -215,12 +240,15 @@ func (a *App) preparePull(work string, before, incoming archive.Manifest, exists
 		if conflicts {
 			j.Backup = filepath.Join(a.State, "Backups", filepath.Base(a.Local)+"_"+a.Now().UTC().Format("2006-01-02T15-04-05Z"))
 		}
-		if _, err := os.Lstat(j.Backup); err == nil {
-			return nil, fmt.Errorf("имя локального бэкапа уже занято: %s", j.Backup)
-		} else if !os.IsNotExist(err) {
+		if err := prepareBackupDestination(j.Backup); err != nil {
 			return nil, err
 		}
-		if err := os.MkdirAll(filepath.Dir(j.Backup), 0700); err != nil {
+	}
+
+	if len(excluded) > 0 && !conflicts {
+		j.ExcludedBackup = filepath.Join(a.State, "FileBackups", filepath.Base(a.Local)+"_"+a.Now().UTC().Format("2006-01-02T15-04-05Z"))
+		j.ExcludedFiles = excludedWithParents(excluded, before)
+		if err := prepareBackupDestination(j.ExcludedBackup); err != nil {
 			return nil, err
 		}
 	}
@@ -256,5 +284,23 @@ func (a *App) backupLocalProject(ctx context.Context, j *Journal, local archive.
 		return errors.New("локальная папка появилась после начала pull; установка остановлена")
 	}
 
+	return nil
+}
+
+func (a *App) finishPull(ctx context.Context, j *Journal) error {
+	if err := a.installBaseline(ctx, j); err != nil {
+		return fmt.Errorf("сохранение базы scrivx не завершено; повторите pull: %w", err)
+	}
+	if err := a.finish(j); err != nil {
+		return err
+	}
+	a.log("Pull завершён: %s", a.Local)
+	if j.RetainWork {
+		a.log("Отчёт о принятых конфликтах: %s", filepath.Join(j.Work, "report", "index.txt"))
+	}
+	if j.Backup != "" && !j.temporaryPullBackup() {
+		a.log("Локальный бэкап: %s", j.Backup)
+	}
+	a.logExcludedBackup(j)
 	return nil
 }

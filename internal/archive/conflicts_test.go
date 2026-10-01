@@ -2,7 +2,7 @@ package archive
 
 import "testing"
 
-func TestInterfaceAndStyleConflicts(t *testing.T) {
+func TestGeneratedFilesAndStyleConflicts(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		local, incoming Manifest
@@ -10,6 +10,17 @@ func TestInterfaceAndStyleConflicts(t *testing.T) {
 	}{
 		{"ui changed", Manifest{"Settings/ui.ini": {Hash: "local"}}, Manifest{"Settings/ui.ini": {Hash: "remote"}}, false},
 		{"ui only local", Manifest{"Settings": {Dir: true}, "Settings/ui.ini": {Hash: "local"}}, Manifest{}, false},
+		{"mac ui changed", Manifest{"Settings/ui.plist": {Hash: "local"}}, Manifest{"Settings/ui.plist": {Hash: "remote"}}, false},
+		{"both ui files only local", Manifest{"Settings": {Dir: true}, "Settings/ui.ini": {}, "Settings/ui.plist": {}}, Manifest{}, false},
+		{"mac ui type changed", Manifest{"Settings/ui.plist": {}}, Manifest{"Settings/ui.plist": {Dir: true}}, true},
+		{"mac ui local directory", Manifest{"Settings/ui.plist": {Dir: true}}, Manifest{}, true},
+		{"preview changed", Manifest{"QuickLook/Preview.html": {Hash: "local"}}, Manifest{"QuickLook/Preview.html": {Hash: "remote"}}, false},
+		{"preview only local", Manifest{"QuickLook": {Dir: true}, "QuickLook/Preview.html": {}, "QuickLook/Thumbnail.jpg": {}}, Manifest{}, false},
+		{"nested preview cache", Manifest{"QuickLook": {Dir: true}, "QuickLook/cache": {Dir: true}, "QuickLook/cache/preview": {}}, Manifest{}, false},
+		{"preview type changed", Manifest{"QuickLook/Preview.html": {}}, Manifest{"QuickLook/Preview.html": {Dir: true}}, true},
+		{"preview root type changed", Manifest{"QuickLook": {Dir: true}}, Manifest{"QuickLook": {}}, true},
+		{"preview root is file", Manifest{"QuickLook": {}}, Manifest{}, true},
+		{"unrelated preview", Manifest{"Files/QuickLook/Preview.html": {}}, Manifest{}, true},
 		{"other settings", Manifest{"Settings": {Dir: true}, "Settings/ui.ini": {}, "Settings/other": {}}, Manifest{}, true},
 		{"ui type changed", Manifest{"Settings/ui.ini": {}}, Manifest{"Settings/ui.ini": {Dir: true}}, true},
 		{"ui local directory", Manifest{"Settings/ui.ini": {Dir: true}}, Manifest{}, true},
